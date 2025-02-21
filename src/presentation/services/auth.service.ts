@@ -1,7 +1,8 @@
-import { bcryptAdapter, JwtAdapter } from "../../config";
+import { bcryptAdapter, envs, JwtAdapter } from "../../config";
 import { UserModel } from "../../data";
 import { CustumError, RegisterUserDto, UserEntity } from "../../domain";
 import { LoginUserDto } from "../../domain/dtos/auth/login-use.dto";
+import { EmailService } from "./email.service";
 
 
 
@@ -10,6 +11,8 @@ export class AuthService {
 
 
     constructor(
+
+        private readonly emailService: EmailService,
 
     ) { }
 
@@ -26,11 +29,13 @@ export class AuthService {
             user.password = bcryptAdapter.hash(registerUserDto.password);
 
             await user.save();
+
+            this.sendEmailValidateLink(user.email);
+
             const { password, ...userEntity } = UserEntity.fromObject(user)
 
             return {
-                user: { ...userEntity },
-                token: 'ABC'
+                user: { ...userEntity }
             };
 
         } catch (error) {
@@ -62,10 +67,65 @@ export class AuthService {
 
     }
 
+    private sendEmailValidateLink = async (email: string) => {
+
+        const token = await JwtAdapter.generateToken({ email });
+
+        if (!token) throw CustumError.internalServe('Error getting token');
+
+        const link = `${envs.WEBSERVICE_URL}/auth/validate-email/${token}`;
+
+        const html = `
+        <h1> Validate your email </h1>
+        <p> Click on the following link to validate your email </p>
+        <a href="${link}"> Validate you email: ${email} </a> 
+        `;
+
+        const options = {
+            to: email,
+            subject: 'Validate your email',
+            htmlBody: html
+        }
+
+        const isSent = await this.emailService.sendEmail(options);
+
+        if (!isSent) throw CustumError.internalServe('Error sending email');
+
+        return true;
+
+    }
+
+
+    public validateEmail = async (token: string) => {
+
+        const payload = await JwtAdapter.validateToken( token );
+        if ( !payload ) throw CustumError.unauthorized('Invalid token');
+
+
+        const  { email } = payload as { email: string };
+
+        if ( !email ) throw CustumError.internalServe('Email not in token');
+
+        const user = await UserModel.findOne( { email } );
+
+        if ( !user ) throw CustumError.internalServe('Email not exists');
+
+        user.emailValidated = true
+        await user.save();
+
+        return true;
+
+
+
+
+
+    }
 
 
 }
 
 
 
+
+export { EmailService };
 
